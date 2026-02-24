@@ -11,7 +11,11 @@ servopin=Pin(4, Pin.OUT)
 pupilservo=Servo(servopin)
 
 #write the angle to the servo
-pupilservo.write_angle(180)
+while (1):
+    for i in range (0,180):
+        pupilservo.write_angle(i)
+        time.sleep(0.01)
 
     
+
 
