@@ -17,6 +17,7 @@ class BLEConnection:
         self._ble.active(True)
         self._ble.irq(self._irq)
         ((self._tx, self._rx),) = self._ble.gatts_register_services((_UART_SERVICE,))
+        self._ble.gatts_set_buffer(self._rx, 100, False)
         self._connections = set()
         self._rx_buffer = bytearray() # <--- Added Buffer to store incoming messages
         
@@ -42,11 +43,16 @@ class BLEConnection:
                 self._connections.remove(conn_handle)
             self._advertise()
             
-        elif event == _IRQ_GATTS_WRITE: # <--- App has sent us data!
+        elif event == _IRQ_GATTS_WRITE:
             conn_handle, value_handle = data
             if conn_handle in self._connections and value_handle == self._rx:
-                # Read the data from the Bluetooth hardware and add to buffer
-                self._rx_buffer += self._ble.gatts_read(self._rx)
+                
+                # 1. Read the data out of the hardware
+                self._rx_buffer = self._ble.gatts_read(self._rx)
+                
+                # 2. OVERWRITE THE HARDWARE BUFFER WITH BLANK DATA
+                # This stops the messages from gluing together
+                self._ble.gatts_write(self._rx, b'')
 
     def is_connected(self):
         return len(self._connections) > 0
@@ -64,15 +70,21 @@ class BLEConnection:
         return len(self._rx_buffer) > 0
 
     def read(self):
-        """Reads the incoming message as a string and clears the buffer."""
+        """Reads the incoming message, sanitizes it, and clears the buffer."""
         if not self.any():
             return ""
         
-        # Decode the bytes to a string
-        message = self._rx_buffer.decode('utf-8').strip()
-        # Clear the buffer so we don't read it twice
+        # 1. Grab the raw bytes
+        raw_bytes = self._rx_buffer
+        
+        # 2. Clear the buffer immediately so it doesn't stack up
         self._rx_buffer = bytearray() 
-        return message
+        
+        # 3. Decode to string, replace null bytes (\x00), and strip whitespace
+        # We replace '\x00' with empty text '' so it disappears entirely.
+        clean_message = raw_bytes.decode('utf-8').replace('\x00', '').strip()
+        
+        return clean_message
 
     def _advertise(self):
         self._ble.gap_advertise(100000, adv_data=self._payload)
