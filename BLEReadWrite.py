@@ -4,21 +4,24 @@ from simple_ble import BLEConnection
 import random
 
 
-my_bluetooth = BLEConnection("ESP32_Etch_Write")
-print("Ready! Scan for 'ESP32_Etch'")
+my_bluetooth = BLEConnection("ESP32_Read_Write")
+print("Ready! Scan for 'ESP32_Read_Write'")
 
 while True:
     if my_bluetooth.is_connected():
         
         # --- NEW: Check for incoming messages ---
-        if my_bluetooth.any():
-            message = my_bluetooth.read()
-            print("Received from phone:", message)
+        message = my_bluetooth.read()
+
+        # Split by comma
+        raw_array = message.split(',')
+
+        # Clean out the \x00 character from each item in the list
+        clean_array = [item.split('\x00')[0] for item in raw_array]
             
-            if message == "CLEAR":
-                print("App cleared the screen. Maybe we should play a sound?")
-            elif message == "RED":
-                print("App changed color to red!")
+        print("Clean Array:", clean_array)
+            
+            
                 
         # --- Existing Send Logic ---
         x_val=random.randint(0,800)
