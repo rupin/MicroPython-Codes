@@ -1,11 +1,11 @@
 import bluetooth
+import time
 from micropython import const
 import ubinascii
 
 _IRQ_CENTRAL_CONNECT = const(1)
 _IRQ_CENTRAL_DISCONNECT = const(2)
 _IRQ_GATTS_WRITE = const(3)
-_IRQ_MTU_EXCHANGED = const(21) 
 
 _UART_UUID = bluetooth.UUID("6E400001-B5A3-F393-E0A9-E50E24DCCA9E")
 _UART_TX = (bluetooth.UUID("6E400003-B5A3-F393-E0A9-E50E24DCCA9E"), const(0x0002) | const(0x0010))
@@ -17,12 +17,6 @@ class BLEConnection:
         self._ble = bluetooth.BLE()
         self._ble.active(False)
         self._ble.active(True)
-        
-        # 1. FORCE THE MTU TO 512 SO ANDROID DOESN'T REJECT THE CONNECTION
-        try:
-            self._ble.config(mtu=512)
-        except ValueError:
-            pass # Older MicroPython versions ignore this
             
         mac_bytes = self._ble.config('mac')[1]
         hex_mac = ubinascii.hexlify(mac_bytes).decode().upper()
@@ -32,11 +26,11 @@ class BLEConnection:
         self._ble.irq(self._irq)
         ((self._tx, self._rx),) = self._ble.gatts_register_services((_UART_SERVICE,))
         
-        # 2. FIX: You MUST set append=True when buffer > 20 bytes, or Android crashes!
-        self._ble.gatts_set_buffer(self._rx, 512, True) 
-        
         self._connections = set()
         self._rx_buffer = bytearray() 
+        
+        # Track the time of the last received message
+        self._last_msg_time = 0 
         
         self._payload = bytearray()
         self._payload.append(0x02)
@@ -51,9 +45,16 @@ class BLEConnection:
 
     def _irq(self, event, data):
         if event == _IRQ_CENTRAL_CONNECT:
-            conn_handle, _, _ = data
+            # data contains: conn_handle, addr_type, addr
+            conn_handle, addr_type, addr = data
             self._connections.add(conn_handle)
-            print("Connected!")
+            
+            # Reset the timeout timer
+            self._last_msg_time = time.ticks_ms()
+            
+            # Extract and print the connecting device's MAC address
+            mac_addr = ":".join(["{:02X}".format(b) for b in addr])
+            print("Connected! Device MAC:", mac_addr)
             
         elif event == _IRQ_CENTRAL_DISCONNECT:
             conn_handle, _, _ = data
@@ -65,15 +66,22 @@ class BLEConnection:
         elif event == _IRQ_GATTS_WRITE:
             conn_handle, value_handle = data
             if conn_handle in self._connections and value_handle == self._rx:
-                # Read all incoming MTU chunks
                 self._rx_buffer += self._ble.gatts_read(self._rx)
-                
-        elif event == _IRQ_MTU_EXCHANGED:
-            # Tell the terminal that Android successfully negotiated the large packet size!
-            conn_handle, mtu = data
-            print("MTU negotiated to:", mtu)
+                # Update the timer every time data is written
+                self._last_msg_time = time.ticks_ms()
 
-            
+    def check_timeout(self, timeout_ms=2000):
+        # Force a disconnect if no data has been received within timeout_ms
+        if self._connections and time.ticks_diff(time.ticks_ms(), self._last_msg_time) > timeout_ms:
+            print("Connection timed out (no messages for {}ms). Forcing disconnect...".format(timeout_ms))
+            for conn_handle in list(self._connections):
+                try:
+                    self._ble.gap_disconnect(conn_handle)
+                except OSError:
+                    pass
+            self._connections.clear()
+            self._advertise()
+                
     def is_connected(self):
         return len(self._connections) > 0
 
@@ -87,15 +95,7 @@ class BLEConnection:
             try:
                 self._ble.gatts_notify(conn_handle, self._tx, str_data.encode())
             except OSError:
-                pass # The disconnect IRQ will handle cleaning this up
-
-    def force_disconnect(self):
-        if self.is_connected():
-            for conn_handle in list(self._connections):
-                try:
-                    self._ble.gap_disconnect(conn_handle) 
-                except OSError:
-                    pass
+                pass 
 
     def any(self):
         return len(self._rx_buffer) > 0
