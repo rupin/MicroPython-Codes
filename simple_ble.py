@@ -15,6 +15,10 @@ class BLEConnection:
     def __init__(self, name="ESP32_Etch"):
         self._ble = bluetooth.BLE()
         self._ble.active(True)
+        
+        # 2. FIX: Force the hardware GAP profile to use the new name
+        self._ble.config(gap_name=name)
+        
         self._ble.irq(self._irq)
         ((self._tx, self._rx),) = self._ble.gatts_register_services((_UART_SERVICE,))
         self._ble.gatts_set_buffer(self._rx, 100, False)
@@ -105,3 +109,15 @@ class BLEConnection:
 
     def _advertise(self):
         self._ble.gap_advertise(100000, adv_data=self._payload)
+        
+    def force_disconnect(self):
+        """Actively kicks off any connected devices and restarts advertising"""
+        if self.is_connected():
+            for conn_handle in list(self._connections):
+                try:
+                    self._ble.gap_disconnect(conn_handle)
+                except OSError:
+                    pass
+            self._connections.clear()
+            print("Forced disconnect. Restarting advertising...")
+            self._advertise()
