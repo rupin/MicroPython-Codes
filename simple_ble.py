@@ -60,9 +60,26 @@ class BLEConnection:
     def send_array(self, data_list):
         if not self.is_connected():
             return
+            
         str_data = ",".join(str(item) for item in data_list) + "\n"
+        
+        # We need a list to track vanished connections
+        dead_connections = []
+        
         for conn_handle in self._connections:
-            self._ble.gatts_notify(conn_handle, self._tx, str_data.encode())
+            try:
+                # Try to notify the app
+                self._ble.gatts_notify(conn_handle, self._tx, str_data.encode())
+            except OSError:
+                # If OSError happens, the app abruptly terminated!
+                dead_connections.append(conn_handle)
+                
+        # Clean up any dead connections and force advertising to restart
+        if dead_connections:
+            for conn_handle in dead_connections:
+                self._connections.remove(conn_handle)
+            print("App abruptly disconnected. Restarting advertising...")
+            self._advertise()
 
     # --- NEW: Student-facing Read Functions ---
     def any(self):
