@@ -10,28 +10,27 @@ connection_ready = False
 left=Pin(18, Pin.IN, Pin.PULL_UP)
 right=Pin(19, Pin.IN, Pin.PULL_UP)
 
+while (not kb.is_connected()):
+    pass
+
+time.sleep(2)
+print("Ready")
+
 while(True):
-    time.sleep_ms(1)
-    if kb.is_connected():
-        if not connection_ready:
-            print("Connected! Waiting 2 seconds for OS security handshake...")
-            time.sleep(2)            
-            connection_ready = True
-            
-        leftVal=left.value()
-        rightVal=right.value()
+    time.sleep_ms(1)         
         
-        
-        
-        if (leftVal==0): # this means the switch is pressed
-            #print("Sending left key")
-            kb.arrow_left()
-            time.sleep_ms(1)
-        if (rightVal==0): # this means the switch is pressed
-            #print("Sending right key")
-            kb.arrow_right()
-            time.sleep_ms(1)
-    else:
-        connection_ready = False
-    
+    leftVal=left.value()
+    rightVal=right.value()
+
+
+
+    if (leftVal==0): # this means the switch is pressed
+        #print("Sending left key")
+        kb.arrow_left()
+        time.sleep_ms(1)
+    if (rightVal==0): # this means the switch is pressed
+        #print("Sending right key")
+        kb.arrow_right()
+        time.sleep_ms(1)
+   
 
