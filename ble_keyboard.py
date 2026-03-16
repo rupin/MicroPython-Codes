@@ -1,6 +1,4 @@
-import bluetooth, struct, time, json, machine, micropython
-
-micropython.alloc_emergency_exception_buf(100)
+import bluetooth, struct, time, json
 
 _K = {
     'a':(4,0),'b':(5,0),'c':(6,0),'d':(7,0),'e':(8,0),'f':(9,0),'g':(10,0),'h':(11,0),'i':(12,0),
@@ -27,48 +25,38 @@ _HID_MAP = bytes([
 
 class BLEKeyboard:
     def __init__(self, name="ESP32_KB"):
-        # --- CLASSROOM NAME FIX ---
-        mac = machine.unique_id()
-        uid = '{:02X}{:02X}'.format(mac[-2], mac[-1])
-        final_name = f"{name[:10]}_{uid}"
-        # --------------------------
-
         self._ble = bluetooth.BLE()
         self._ble.active(True)
         self._ble.irq(self._irq)
         self._connected = False
         self._conn_handle = None
         
+        # Load any saved pairing keys from previous sessions
         self._secrets = {}
-        
-        # Load saved bonding keys (from the dirty crash save)
         try:
             with open('ble_secrets.json', 'r') as f:
                 saved = json.load(f)
                 for k, v in saved.items():
-                    # Handle hex string reconversion
-                    k_bytes = bytes.fromhex(k) if isinstance(k, str) and "_" not in k else k
-                    v_bytes = bytes.fromhex(v) if v else None
-                    self._secrets[k_bytes] = v_bytes
+                    self._secrets[k] = bytes(v) if v else None
         except:
             pass
 
-        # Strict bonding required for Windows 11
+        # Windows/Mac strict bonding requirement
         try:
-            self._ble.config(gap_name=final_name, io=3, bond=True, le_secure=True)
+            self._ble.config(gap_name=name, io=3, bond=True, le_secure=True)
         except:
-            self._ble.config(gap_name=final_name)
+            self._ble.config(gap_name=name)
 
-        F_R_E   = 0x0002 | 0x0200
-        F_R_N_E = 0x0002 | 0x0010 | 0x0200
-        F_R_W_E = 0x0002 | 0x0008 | 0x0200 | 0x1000
+        F_R = bluetooth.FLAG_READ
+        F_R_N = bluetooth.FLAG_READ | bluetooth.FLAG_NOTIFY
+        F_R_W = bluetooth.FLAG_READ | bluetooth.FLAG_WRITE
         
-        bat_service = (bluetooth.UUID(0x180F), ((bluetooth.UUID(0x2A19), F_R_N_E),))
-        dev_info = (bluetooth.UUID(0x180A), ((bluetooth.UUID(0x2A50), F_R_E),))
+        bat_service = (bluetooth.UUID(0x180F), ((bluetooth.UUID(0x2A19), F_R_N),))
+        dev_info = (bluetooth.UUID(0x180A), ((bluetooth.UUID(0x2A50), F_R),))
         hid_service = (bluetooth.UUID(0x1812), (
-            (bluetooth.UUID(0x2A4A), F_R_E), (bluetooth.UUID(0x2A4B), F_R_E),
-            (bluetooth.UUID(0x2A4D), F_R_N_E, ((bluetooth.UUID(0x2908), F_R_E),)),
-            (bluetooth.UUID(0x2A4E), F_R_W_E),
+            (bluetooth.UUID(0x2A4A), F_R), (bluetooth.UUID(0x2A4B), F_R),
+            (bluetooth.UUID(0x2A4D), F_R_N, ((bluetooth.UUID(0x2908), F_R),)),
+            (bluetooth.UUID(0x2A4E), F_R_W),
         ))
 
         services = self._ble.gatts_register_services((bat_service, dev_info, hid_service))
@@ -84,53 +72,48 @@ class BLEKeyboard:
         self._ble.gatts_write(self._h_rep_ref, bytes([1, 1])) 
         self._ble.gatts_write(self._h_proto, b"\x01") 
         
+        # Buffer to prevent keyboard typing crashes
         self._ble.gatts_set_buffer(self._h_rep, 20, True)
 
         adv = bytearray()
         adv.extend(b"\x02\x01\x06")
         adv.extend(b"\x03\x19\xc1\x03") 
         adv.extend(b"\x05\x03\x12\x18\x0f\x18") 
-        adv.extend(bytes([len(final_name) + 1, 0x09]) + final_name.encode())
+        adv.extend(bytes([len(name) + 1, 0x09]) + name.encode())
         self._adv_payload = bytes(adv)
         self._advertise()
-        
-        print(f"[*] Broadcasting Bluetooth Name: {final_name}")
 
     def _irq(self, event, data):
-        if event == 1: 
+        if event == 1: # _IRQ_CENTRAL_CONNECT
             self._conn_handle, _, _ = data
             self._connected = True
-        elif event == 2: 
+            
+        elif event == 2: # _IRQ_CENTRAL_DISCONNECT
             self._connected = False
             self._conn_handle = None
             self._advertise()
-        elif event == 15: 
-            pass 
-        elif event == 17: 
+            
+        elif event == 15: # _IRQ_ENCRYPTION_UPDATE
+            pass # Windows reconnecting
+            
+        elif event == 17: # _IRQ_PASSKEY_ACTION
             try: self._ble.gap_passkey(data[0], data[1], 1)
             except: pass
-        elif event == 29: # GET_SECRET
+            
+        elif event == 29: # _IRQ_GET_SECRET (OS is asking for our saved keys)
             sec_type, index, key = data
-            key_bytes = bytes(key) if key else b""
-            dict_key = f"{sec_type}_{index}_{key_bytes.hex()}"
-            saved_hex = self._secrets.get(dict_key, None)
-            return bytes.fromhex(saved_hex) if saved_hex else None
+            return self._secrets.get(f"{sec_type}_{index}_{key}", None)
             
-        elif event == 30: # SET_SECRET (Triggers the INTENTIONAL crash-save)
+        elif event == 30: # _IRQ_SET_SECRET (OS is giving us keys to save)
             sec_type, key, value = data
-            key_bytes = bytes(key) if key else b""
-            val_bytes = bytes(value) if value else None
-            
-            dict_key = f"{sec_type}_{0}_{key_bytes.hex()}"
-            self._secrets[dict_key] = val_bytes.hex() if val_bytes else None
-            
-            # Intentionally writing inside the IRQ to force the quick save before the LoadProhibited panic
-            save_dict = {
-                k.hex() if isinstance(k, bytes) else str(k): v
-                for k, v in self._secrets.items()
-            }
-            with open('ble_secrets.json', 'w') as f:
-                json.dump(save_dict, f)
+            self._secrets[f"{sec_type}_{0}_{key}"] = value
+            # Save dictionary to flash memory so it survives reboots
+            try:
+                save_dict = {k: list(v) if v else None for k, v in self._secrets.items()}
+                with open('ble_secrets.json', 'w') as f:
+                    json.dump(save_dict, f)
+            except:
+                pass
             return True
 
     def _advertise(self):
@@ -141,7 +124,9 @@ class BLEKeyboard:
 
     def _send(self, payload):
         conn = self._conn_handle
-        if not self._connected or conn is None: return
+        if not self._connected or conn is None: 
+            return
+            
         for _ in range(10):  
             try:
                 self._ble.gatts_notify(conn, self._h_rep, payload)
@@ -178,3 +163,4 @@ class BLEKeyboard:
             elif c in _K:
                 self.send_raw(_K[c][0], modifier=_K[c][1])
             time.sleep_ms(20)
+
