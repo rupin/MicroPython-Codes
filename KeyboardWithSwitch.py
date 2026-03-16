@@ -17,20 +17,22 @@ time.sleep(2)
 print("Ready")
 
 while(True):
-    time.sleep_ms(1)         
+            
         
     leftVal=left.value()
     rightVal=right.value()
 
 
 
-    if (leftVal==0): # this means the switch is pressed
+    if (leftVal==0): # this means the left switch is pressed
         #print("Sending left key")
         kb.arrow_left()
         time.sleep_ms(1)
-    if (rightVal==0): # this means the switch is pressed
+    if (rightVal==0): # this means the right switch is pressed
         #print("Sending right key")
         kb.arrow_right()
         time.sleep_ms(1)
+        
+    time.sleep_ms(1) 
    
 
