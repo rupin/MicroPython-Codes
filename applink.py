@@ -67,7 +67,7 @@ class AppInventorLink:
                 
                 # Convert query string to a dictionary
                 params = self._parse_query_string(qs)
-                
+                print(params)
                 response_data = "{}"
                 if self.callback:
                     # Pass parameters to student's code and get their response
