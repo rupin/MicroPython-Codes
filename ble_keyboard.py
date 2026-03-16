@@ -1,4 +1,4 @@
-import bluetooth, struct, time, json
+import bluetooth, struct, time, machine
 
 _K = {
     'a':(4,0),'b':(5,0),'c':(6,0),'d':(7,0),'e':(8,0),'f':(9,0),'g':(10,0),'h':(11,0),'i':(12,0),
@@ -25,31 +25,28 @@ _HID_MAP = bytes([
 
 class BLEKeyboard:
     def __init__(self, name="ESP32_KB"):
+        # CLASSROOM FIX: Automatically generate a unique name
+        # 1. Get the hardware MAC address of this specific ESP32
+        mac = machine.unique_id()
+        # 2. Grab the last 2 bytes and convert them to a 4-character hex string
+        uid = '{:02X}{:02X}'.format(mac[-2], mac[-1])
+        # 3. Truncate the student's name to 10 chars max, and append the unique ID
+        final_name = f"{name[:9]}_{uid}"
+        
         self._ble = bluetooth.BLE()
         self._ble.active(True)
         self._ble.irq(self._irq)
         self._connected = False
         self._conn_handle = None
-        
-        # Load any saved pairing keys from previous sessions
-        self._secrets = {}
-        try:
-            with open('ble_secrets.json', 'r') as f:
-                saved = json.load(f)
-                for k, v in saved.items():
-                    self._secrets[k] = bytes(v) if v else None
-        except:
-            pass
 
-        # Windows/Mac strict bonding requirement
         try:
-            self._ble.config(gap_name=name, io=3, bond=True, le_secure=True)
+            self._ble.config(gap_name=final_name, io=3, bond=False, le_secure=False)
         except:
-            self._ble.config(gap_name=name)
+            self._ble.config(gap_name=final_name)
 
-        F_R = bluetooth.FLAG_READ
-        F_R_N = bluetooth.FLAG_READ | bluetooth.FLAG_NOTIFY
-        F_R_W = bluetooth.FLAG_READ | bluetooth.FLAG_WRITE
+        F_R = 0x0002
+        F_R_N = 0x0002 | 0x0010
+        F_R_W = 0x0002 | 0x0008
         
         bat_service = (bluetooth.UUID(0x180F), ((bluetooth.UUID(0x2A19), F_R_N),))
         dev_info = (bluetooth.UUID(0x180A), ((bluetooth.UUID(0x2A50), F_R),))
@@ -72,49 +69,28 @@ class BLEKeyboard:
         self._ble.gatts_write(self._h_rep_ref, bytes([1, 1])) 
         self._ble.gatts_write(self._h_proto, b"\x01") 
         
-        # Buffer to prevent keyboard typing crashes
         self._ble.gatts_set_buffer(self._h_rep, 20, True)
 
         adv = bytearray()
         adv.extend(b"\x02\x01\x06")
         adv.extend(b"\x03\x19\xc1\x03") 
         adv.extend(b"\x05\x03\x12\x18\x0f\x18") 
-        adv.extend(bytes([len(name) + 1, 0x09]) + name.encode())
+        # Use the newly generated safe final_name for advertising!
+        adv.extend(bytes([len(final_name) + 1, 0x09]) + final_name.encode())
         self._adv_payload = bytes(adv)
         self._advertise()
 
+        # Print the final name to the console so the student knows what to connect to!
+        print(f"[*] Broadcasting Bluetooth Name: {final_name}")
+
     def _irq(self, event, data):
-        if event == 1: # _IRQ_CENTRAL_CONNECT
+        if event == 1: 
             self._conn_handle, _, _ = data
             self._connected = True
-            
-        elif event == 2: # _IRQ_CENTRAL_DISCONNECT
+        elif event == 2: 
             self._connected = False
             self._conn_handle = None
             self._advertise()
-            
-        elif event == 15: # _IRQ_ENCRYPTION_UPDATE
-            pass # Windows reconnecting
-            
-        elif event == 17: # _IRQ_PASSKEY_ACTION
-            try: self._ble.gap_passkey(data[0], data[1], 1)
-            except: pass
-            
-        elif event == 29: # _IRQ_GET_SECRET (OS is asking for our saved keys)
-            sec_type, index, key = data
-            return self._secrets.get(f"{sec_type}_{index}_{key}", None)
-            
-        elif event == 30: # _IRQ_SET_SECRET (OS is giving us keys to save)
-            sec_type, key, value = data
-            self._secrets[f"{sec_type}_{0}_{key}"] = value
-            # Save dictionary to flash memory so it survives reboots
-            try:
-                save_dict = {k: list(v) if v else None for k, v in self._secrets.items()}
-                with open('ble_secrets.json', 'w') as f:
-                    json.dump(save_dict, f)
-            except:
-                pass
-            return True
 
     def _advertise(self):
         self._ble.gap_advertise(100_000, self._adv_payload)
@@ -124,9 +100,7 @@ class BLEKeyboard:
 
     def _send(self, payload):
         conn = self._conn_handle
-        if not self._connected or conn is None: 
-            return
-            
+        if not self._connected or conn is None: return
         for _ in range(10):  
             try:
                 self._ble.gatts_notify(conn, self._h_rep, payload)
@@ -163,6 +137,3 @@ class BLEKeyboard:
             elif c in _K:
                 self.send_raw(_K[c][0], modifier=_K[c][1])
             time.sleep_ms(20)
-
-
-
