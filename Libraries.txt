@@ -1,2 +1,14 @@
 Servo Library
 https://github.com/pvanallen/esp32-getstarted/blob/master/examples/servo.py
+
+Wifi Library
+https://github.com/rupin/MicroPython-Codes/blob/main/applink.py
+
+Bluetooth Library
+https://github.com/rupin/MicroPython-Codes/blob/main/simple_ble.py
+
+BLE Keyboard Library 
+https://github.com/rupin/MicroPython-Codes/blob/main/ble_keyboard.py
+
+UltraSonic Distance Sensor Library
+https://github.com/rsc1975/micropython-hcsr04/blob/master/hcsr04.py
